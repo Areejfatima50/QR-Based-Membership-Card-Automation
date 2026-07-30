@@ -1,0 +1,401 @@
+// =====================================
+// Configuration
+// =====================================
+/**
+ * QR-Based Membership Card Automation
+ *
+ * Developed for:
+ * Character Building Society (CBS)
+ * Nishtar Medical University
+ *
+ * Note:
+ * Replace TEMPLATE_ID and OUTPUT_FOLDER_ID
+ * with your own Google Workspace resources
+ * before deployment.
+ */
+const TEMPLATE_ID = "YOUR_GOOGLE_SLIDES_TEMPLATE_ID";
+const OUTPUT_FOLDER_ID = "YOUR_GOOGLE_DRIVE_FOLDER_ID";
+
+
+function createMembershipCard(e) {
+
+  const rowNumber = e.range.getRow();
+
+  generateMembershipCard(rowNumber);
+
+}
+function generateMembershipCard(rowNumber)  {
+
+  // Read Sheet
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+
+const lastRowIndex = rowNumber;
+
+const lastRow = data[lastRowIndex - 1];
+
+
+// ==============================
+// Read data from Google Sheet
+// ==============================
+
+const fullName = lastRow[1];
+
+// Name shown on ID card
+const cardName = shortenText(fullName.toUpperCase(), 18);
+const photo = lastRow[2];
+
+const designation = lastRow[3];
+
+const department = lastRow[4];
+
+const studentClass = lastRow[5];
+
+const paymentSlip = lastRow[6];
+
+const email = lastRow[7];
+
+// Existing Member ID (if regenerating)
+let memberID = lastRow[8];
+
+if (!memberID) {
+
+  const memberNumber = String(lastRowIndex - 1).padStart(3, "0");
+
+  memberID = "CBS-NMU-2026-" + memberNumber;
+
+  sheet.getRange(lastRowIndex, 9).setValue(memberID);
+
+}
+
+  // Get Template
+  const templateFile = DriveApp.getFileById(TEMPLATE_ID);
+
+  // Get Output Folder
+  const outputFolder = DriveApp.getFolderById(OUTPUT_FOLDER_ID);
+  
+const qrText =
+`================================
+          CBS SOCIETY
+================================
+
+Member ID : ${memberID}
+
+Name : ${fullName.toUpperCase()}
+
+Department : ${department}
+
+Class      : ${studentClass}
+
+Designation: ${designation}`;
+
+
+// Generate QR image
+   const qrBlob = generateQRBlob(qrText);
+
+  // Make a Copy
+  const copiedFile = templateFile.makeCopy(
+    memberID + " - " + fullName,
+    outputFolder
+  );
+
+const presentation = SlidesApp.openById(copiedFile.getId());
+
+const slides = presentation.getSlides();
+
+if (slides.length < 2) {
+  throw new Error("Template must contain two slides (Front and Back).");
+}
+const frontSlide = slides[0];
+const backSlide = slides[1];
+
+// Replace placeholders
+frontSlide.replaceAllText("{{NAME}}", cardName);
+frontSlide.replaceAllText("{{MEMBER_ID}}", memberID);
+frontSlide.replaceAllText("{{CLASS}}", studentClass);
+frontSlide.replaceAllText("{{DESIGNATION}}", designation);
+frontSlide.replaceAllText("{{DEPARTMENT}}", department);
+
+const shapes = frontSlide.getShapes();
+for (const shape of shapes) {
+
+  const text = shape.getText();
+
+  if (text.asString().includes(department)) {
+
+    text.getTextStyle()
+      .setForegroundColor("#033f42");   // your dark teal
+
+    text.getTextStyle()
+      .setFontSize(4.5);
+
+    break;
+  }
+}
+// =============================
+// Replace PHOTO Placeholder
+// =============================
+const fileId = getDriveFileId(photo);
+
+const imageBlob = DriveApp
+  .getFileById(fileId)
+  .getBlob();
+
+replacePlaceholderWithImage(
+    frontSlide,
+    "{{PHOTO}}",
+    imageBlob
+);
+
+replacePlaceholderWithImage(
+   backSlide,
+    "{{QR}}",
+    qrBlob
+);
+
+
+
+
+
+
+// test photo
+Logger.log(photo);
+Logger.log(typeof photo);
+Logger.log(fileId);
+
+// Save changes
+presentation.saveAndClose();
+
+
+// Export copied presentation as PDF
+const pdfBlob = DriveApp
+  .getFileById(copiedFile.getId())
+  .getBlob()
+  .getAs(MimeType.PDF);
+
+// ==============================
+// Generate Next PDF Version
+// ==============================
+
+const pdfName = getNextPdfName(outputFolder, memberID);
+
+pdfBlob.setName(pdfName);
+
+
+// Save PDF inside the output folder
+const pdfFile = outputFolder.createFile(pdfBlob);
+copiedFile.setTrashed(true);
+sheet.getRange(lastRowIndex, 10).setValue(pdfFile.getUrl());
+
+
+Logger.log("PDF Created");
+Logger.log(pdfFile.getUrl());
+
+
+Logger.log("Text replaced successfully.");
+Logger.log("Template Copied Successfully");
+
+  Logger.log(copiedFile.getUrl());
+
+}
+
+function regenerateMembershipCard() {
+
+  const sheet = SpreadsheetApp
+    .getActiveSpreadsheet()
+    .getActiveSheet();
+
+  const row = sheet.getActiveCell().getRow();
+
+  if (row <= 1) {
+    SpreadsheetApp.getUi().alert(
+      "Please select a member row."
+    );
+    return;
+  }
+
+  generateMembershipCard(row);
+
+}
+function generateQRBlob(qrText) {
+
+  const qrURL =
+    "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
+    encodeURIComponent(qrText);
+
+  const response = UrlFetchApp.fetch(qrURL);
+
+  return response.getBlob();
+}
+// placeholder
+function replacePlaceholderWithImage(slide, placeholder, imageBlob) {
+
+  const pageElements = slide.getPageElements();
+
+  for (let i = 0; i < pageElements.length; i++) {
+
+    const element = pageElements[i];
+
+    if (element.getPageElementType() ==
+        SlidesApp.PageElementType.SHAPE) {
+
+      const shape = element.asShape();
+
+      const text = shape.getText().asString().trim();
+
+      if (text == placeholder) {
+
+        const left = element.getLeft();
+        const top = element.getTop();
+        const width = element.getWidth();
+        const height = element.getHeight();
+
+        element.remove();
+
+        const image = slide.insertImage(imageBlob);
+
+        image.setLeft(left);
+        image.setTop(top);
+        const originalWidth = image.getWidth();
+const originalHeight = image.getHeight();
+
+const scale = Math.max(
+  width / originalWidth,
+  height / originalHeight
+);
+
+image.setWidth(originalWidth * scale);
+image.setHeight(originalHeight * scale);
+
+image.setLeft(left + (width - image.getWidth()) / 2);
+image.setTop(top + (height - image.getHeight()) / 2);
+
+        break;
+
+      }
+    }
+  }
+}
+
+
+function getDriveFileId(url) {
+
+  const match = url.match(/[-\w]{25,}/);
+
+  if (match) {
+    return match[0];
+  }
+
+  return null;
+
+}
+
+function onOpen() {
+
+  SpreadsheetApp.getUi()
+    .createMenu("Membership System")
+    .addItem(
+      "Regenerate Selected Card",
+      "regenerateMembershipCard"
+    )
+    .addToUi();
+
+}
+
+/**
+ * Limits text to a maximum number of characters.
+ * It never cuts a word in half.
+ */
+function shortenText(text, maxLength) {
+
+  // If already short enough, return as it is
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  // Cut at the maximum length
+  let shortened = text.substring(0, maxLength);
+
+  // Find the last space
+  const lastSpace = shortened.lastIndexOf(" ");
+
+  // If a space exists, remove the incomplete last word
+  if (lastSpace > 0) {
+    shortened = shortened.substring(0, lastSpace);
+  }
+
+  return shortened;
+}
+
+
+/**
+ * Returns the next available PDF name.
+ *
+ * Example:
+ * First PDF:
+ * CBS-NMU-2026-001.pdf
+ *
+ * Second:
+ * CBS-NMU-2026-001_v2.pdf
+ *
+ * Third:
+ * CBS-NMU-2026-001_v3.pdf
+ */
+function getNextPdfName(folder, memberID) {
+
+  let highestVersion = 0;
+
+  const files = folder.getFiles();
+
+  while (files.hasNext()) {
+
+    const file = files.next();
+
+    const name = file.getName();
+
+    // Ignore files that don't belong to this member
+    if (!name.startsWith(memberID)) {
+      continue;
+    }
+
+    // Original PDF (no version)
+    if (name === memberID + ".pdf") {
+
+      highestVersion = Math.max(highestVersion, 1);
+      continue;
+
+    }
+
+    // Match filenames like:
+    // CBS-NMU-2026-001_v2.pdf
+    // CBS-NMU-2026-001_v15.pdf
+
+    const match =
+      name.match(/_v(\d+)\.pdf$/);
+
+    if (match) {
+
+      const version =
+        parseInt(match[1], 10);
+
+      highestVersion =
+        Math.max(highestVersion, version);
+
+    }
+
+  }
+
+  // First generation
+  if (highestVersion === 0) {
+
+    return memberID + ".pdf";
+
+  }
+
+  // Next version
+  return memberID + "_v" +
+         (highestVersion + 1) +
+         ".pdf";
+
+}
+
